@@ -1,19 +1,39 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/mem"
 )
 
+type diagnostic struct {
+	CPU      []cpu.InfoStat         `json:"CPU"`
+	CPUUsage float64                `json:"CPU Usage"`
+	Memory   *mem.VirtualMemoryStat `json:"Memory"`
+	Disk     []*disk.UsageStat      `json:"Disk"`
+}
+
+var cpuData []cpu.InfoStat
+var cpuUsage float64
+var memoryData *mem.VirtualMemoryStat
+var diskData []*disk.UsageStat
+
 func main() {
+	router := mux.NewRouter().StrictSlash(true)
+	router.HandleFunc("/stats", createDiagnostic)
+	log.Fatal(http.ListenAndServe(":9000", router))
+}
 
+func runDiagnostic() {
 	var diskUsage []*disk.UsageStat
-
 	v, _ := mem.VirtualMemory()
 	cores, _ := cpu.Percent(time.Second, false)
 	cpuStats, _ := cpu.Info()
@@ -21,21 +41,36 @@ func main() {
 
 	for _, cpuStat := range cpuStats {
 		printCPUStats(cpuStat)
+		cpuData = append(cpuData, cpuStat)
 	}
 
 	for _, core := range cores {
 		printCPUUsage(core)
+		cpuUsage = core
 	}
 
 	for _, part := range parts {
 		u, err := disk.Usage(part.Mountpoint)
 		check(err)
 		diskUsage = append(diskUsage, u)
+		diskData = append(diskData, u)
 		printDiskUsage(u)
 	}
 
 	printMemoryUsage(v)
+	memoryData = v
 
+}
+
+func createDiagnostic(w http.ResponseWriter, r *http.Request) {
+	runDiagnostic()
+	foobar := diagnostic{
+		CPU:      cpuData,
+		CPUUsage: cpuUsage,
+		Memory:   memoryData,
+		Disk:     diskData,
+	}
+	json.NewEncoder(w).Encode(foobar)
 }
 
 func printCPUStats(cpu cpu.InfoStat) {
